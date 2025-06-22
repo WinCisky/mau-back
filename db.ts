@@ -17,7 +17,7 @@ export async function runMigrations() {
       CREATE TABLE IF NOT EXISTS episodes (
         id SERIAL PRIMARY KEY,
         episode_link TEXT NOT NULL,
-        video_link TEXT NOT NULL,
+        video_link TEXT,
         episode_number INTEGER NOT NULL,
         anime_id INTEGER NOT NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -26,13 +26,14 @@ export async function runMigrations() {
       CREATE TABLE IF NOT EXISTS animes (
         id SERIAL PRIMARY KEY,
         name TEXT NOT NULL,
-        slug TEXT NOT NULL UNIQUE,
         image_url TEXT NOT NULL,
         description TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
       ALTER TABLE episodes ADD CONSTRAINT episodes_anime_episode_unique UNIQUE (anime_id, episode_number);
+      CREATE INDEX IF NOT EXISTS idx_episodes_anime_id ON episodes (anime_id);
+      CREATE INDEX IF NOT EXISTS idx_episodes_episode_number ON episodes (episode_number);
     `;
   } finally {
     connection.release();
@@ -41,7 +42,7 @@ export async function runMigrations() {
 
 export async function saveEpisode(episode: {
   episode_link: string;
-  video_link: string;
+  video_link: string | null;
   episode_number: number;
   anime_id: number;
 }) {
@@ -51,6 +52,24 @@ export async function saveEpisode(episode: {
       INSERT INTO episodes (episode_link, video_link, episode_number, anime_id)
       VALUES (${episode.episode_link}, ${episode.video_link}, ${episode.episode_number}, ${episode.anime_id})
       ON CONFLICT (anime_id, episode_number) DO NOTHING; -- Prevent duplicates
+    `;
+  } finally {
+    connection.release();
+  }
+}
+
+export async function saveAnime(anime: {
+  id: number;
+  name: string;
+  image_url: string;
+  description?: string;
+}) {
+  const connection = await pool.connect();
+  try {
+    await connection.queryObject`
+      INSERT INTO animes (id, name, image_url, description)
+      VALUES (${anime.id}, ${anime.name}, ${anime.image_url}, ${anime.description})
+      ON CONFLICT (id) DO NOTHING; -- Prevent duplicates
     `;
   } finally {
     connection.release();
