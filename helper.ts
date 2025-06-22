@@ -14,11 +14,12 @@ export async function storeEpisodesFromHtml(html: string, site: string) {
 
     // Extract data from each item
     const extractedData: Array<{
-        id: number | null;
-        link: string | null;
+        id: number;
         img: string | null;
         name: string | null;
-        number: number | null;
+        number: number;
+        anime_slug: string;
+        episode_slug: string;
     }> = [];
 
     items.forEach(item => {
@@ -42,20 +43,37 @@ export async function storeEpisodesFromHtml(html: string, site: string) {
                 number = parseInt(epNumberMatch[1], 10);
             }
         }
-        // add domain to href if it has no protocol
-        const link = href && !href.startsWith('http') ? `${site}${href}` : href;
+        // split href in anime slug and episode slug
+        // e.g., "/play/maebashi-witches.HjdLI/hqq831" becomes ["maebashi-witches.HjdLI", "hqq831"]
+        const hrefParts = href ? href.split('/') : [];
+        // if hrefParts has less than 2 parts, we can't extract the anime slug and episode slug
+        if (hrefParts.length < 2) {
+            console.warn("Invalid href format:", href);
+            return;
+        }
+        const animeSlug = hrefParts[hrefParts.length - 2]; // e.g., "maebashi-witches.HjdLI"
+        const episodeSlug = hrefParts[hrefParts.length - 1]; // e.g., "hqq831"
         // grab the last part of the data-tip, which is the id (e.g., "api/tooltip/12345")
         const id = dataTip ? parseInt(dataTip.split('/').pop(), 10) : null;
         const img = image ? image.getAttribute('src') : null;
         const name = nameLink && nameLink.textContent ? nameLink.textContent.trim() : null;
 
+        if (id === null || isNaN(id)) {
+            console.warn("No valid ID found for item:", item);
+            return;
+        }
+        if (number === null || isNaN(number)) {
+            console.warn("No valid episode number found for item:", item);
+            return;
+        }
 
         const itemData = {
             id: id,
-            link: link,
             img: img,
             name: name,
-            number: number
+            number: number,
+            anime_slug: animeSlug,
+            episode_slug: episodeSlug,
         };
 
         extractedData.push(itemData);
@@ -65,21 +83,17 @@ export async function storeEpisodesFromHtml(html: string, site: string) {
 
     // save anime and episodes to the database
     for (const data of extractedData) {
-        if (data.id && data.id > 0) {
-            await saveAnime({
-                id: data.id,
-                name: data.name || `Anime ${data.id}`,
-                image_url: data.img || "",
-            });
-            await saveEpisode({
-                episode_link: data.link || "",
-                video_link: null,
-                episode_number: data.number || -1,
-                anime_id: data.id,
-            });
-        } else {
-            console.warn("No ID found for item:", data);
-        }
+        await saveAnime({
+            id: data.id,
+            slug: data.anime_slug,
+            name: data.name,
+            image_url: data.img,
+        });
+        await saveEpisode({
+            slug: data.episode_slug,
+            episode_number: data.number,
+            anime_id: data.id,
+        });
     }
     console.log("Episodes extracted successfully");
 }

@@ -15,23 +15,23 @@ export async function runMigrations() {
   try {
     await connection.queryObject`
       CREATE TABLE IF NOT EXISTS episodes (
-        id SERIAL PRIMARY KEY,
-        episode_link TEXT NOT NULL,
-        video_link TEXT,
+        id INTEGER,
+        slug TEXT NOT NULL,
         episode_number INTEGER NOT NULL,
         anime_id INTEGER NOT NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (anime_id, episode_number)
       );
       CREATE TABLE IF NOT EXISTS animes (
-        id SERIAL PRIMARY KEY,
-        name TEXT NOT NULL,
-        image_url TEXT NOT NULL,
+        id INTEGER PRIMARY KEY,
+        slug TEXT NOT NULL,
+        name TEXT,
+        image_url TEXT,
         description TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
-      ALTER TABLE episodes ADD CONSTRAINT episodes_anime_episode_unique UNIQUE (anime_id, episode_number);
       CREATE INDEX IF NOT EXISTS idx_episodes_anime_id ON episodes (anime_id);
       CREATE INDEX IF NOT EXISTS idx_episodes_episode_number ON episodes (episode_number);
     `;
@@ -41,17 +41,19 @@ export async function runMigrations() {
 }
 
 export async function saveEpisode(episode: {
-  episode_link: string;
-  video_link: string | null;
+  slug: string;
   episode_number: number;
   anime_id: number;
 }) {
   const connection = await pool.connect();
   try {
     await connection.queryObject`
-      INSERT INTO episodes (episode_link, video_link, episode_number, anime_id)
-      VALUES (${episode.episode_link}, ${episode.video_link}, ${episode.episode_number}, ${episode.anime_id})
-      ON CONFLICT (anime_id, episode_number) DO NOTHING; -- Prevent duplicates
+      INSERT INTO episodes (slug, episode_number, anime_id)
+      VALUES (${episode.slug}, ${episode.episode_number}, ${episode.anime_id})
+      ON CONFLICT (slug) DO UPDATE SET
+        episode_number = EXCLUDED.episode_number,
+        anime_id = EXCLUDED.anime_id,
+        updated_at = CURRENT_TIMESTAMP;
     `;
   } finally {
     connection.release();
@@ -60,16 +62,21 @@ export async function saveEpisode(episode: {
 
 export async function saveAnime(anime: {
   id: number;
-  name: string;
-  image_url: string;
-  description?: string;
+  slug: string;
+  name?: string | null;
+  image_url?: string | null;
+  description?: string | null;
 }) {
   const connection = await pool.connect();
   try {
     await connection.queryObject`
-      INSERT INTO animes (id, name, image_url, description)
-      VALUES (${anime.id}, ${anime.name}, ${anime.image_url}, ${anime.description})
-      ON CONFLICT (id) DO NOTHING; -- Prevent duplicates
+      INSERT INTO animes (id, slug, name, image_url, description)
+      VALUES (${anime.id}, ${anime.slug}, ${anime.name}, ${anime.image_url}, ${anime.description})
+      ON CONFLICT (slug) DO UPDATE SET
+        name = EXCLUDED.name,
+        image_url = EXCLUDED.image_url,
+        description = EXCLUDED.description,
+        updated_at = CURRENT_TIMESTAMP;
     `;
   } finally {
     connection.release();
