@@ -32,6 +32,7 @@ export async function runMigrations() {
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
+      ALTER TABLE episodes ADD CONSTRAINT episodes_anime_episode_unique UNIQUE (anime_id, episode_number);
     `;
   } finally {
     connection.release();
