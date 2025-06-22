@@ -37,3 +37,21 @@ export async function runMigrations() {
     connection.release();
   }
 }
+
+export async function saveEpisode(episode: {
+  episode_link: string;
+  video_link: string;
+  episode_number: number;
+  anime_id: number;
+}) {
+  const connection = await pool.connect();
+  try {
+    await connection.queryObject`
+      INSERT INTO episodes (episode_link, video_link, episode_number, anime_id)
+      VALUES (${episode.episode_link}, ${episode.video_link}, ${episode.episode_number}, ${episode.anime_id})
+      ON CONFLICT (anime_id, episode_number) DO NOTHING; -- Prevent duplicates
+    `;
+  } finally {
+    connection.release();
+  }
+}

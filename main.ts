@@ -1,6 +1,10 @@
 import { Hono } from "https://deno.land/x/hono@v3.4.1/mod.ts";
 
-import { runMigrations, addTodo, getTodos } from "./db.ts";
+import { 
+  runMigrations,
+  saveEpisode
+} from "./db.ts";
+import { storeEpisodesFromHtml } from "./helper.ts";
 
 const app = new Hono();
 
@@ -26,22 +30,8 @@ app.get("/updated", async (c) => {
   const html = await response.text();
   console.log("Fetched HTML successfully");
   // get all episodes from the html
-  const regex = /<div class="item">[\s\S]*?<a href="([^"]*)" class="poster[^"]*" data-tip="api\/tooltip\/(\d+)"[\s\S]*?<img[^>]*src="([^"]*)"[\s\S]*?<div class="ep">\s*Ep\s*(\d+)\s*<\/div>[\s\S]*?<\/div>/g;
-
-  for (const match of html.matchAll(regex)) {
-      const [_, link, id, imageUrl, episodeNumber] = match;
-      console.log("Found episode:", episodeNumber, "link:", link, "with ID:", id, "image:", imageUrl);
-      
-      // todo: check if anime already exists, if does not, create a new entry (recover anime data later)
-
-      // todo: save the episode to the database
-
-
-      return; // todo: remove this return to process all episodes
-  }
-
+  await storeEpisodesFromHtml(html, SITE);
   console.log("Episodes extracted successfully");
-
 });
 
 Deno.serve(app.fetch);
