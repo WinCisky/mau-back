@@ -1,39 +1,47 @@
 import { Hono } from "https://deno.land/x/hono@v3.4.1/mod.ts";
 
+import { runMigrations, addTodo, getTodos } from "./db.ts";
+
 const app = new Hono();
-const kv = await Deno.openKv();
 
-// Redirect root URL
-app.get("/", (c) => c.redirect("/books"));
+const SITE = "https://animeworld.ac";
 
-// List all books
-app.get("/books", async (c) => {
-  const iter = await kv.list({ prefix: ["books"] });
-  const books = [];
-  for await (const res of iter) books.push(res);
-
-  return c.json(books);
+app.get("/migrate", async (c) => {
+  try {
+    await runMigrations();
+    return c.text("Migrations completed successfully");
+  } catch (error) {
+    console.error("Migration error:", error);
+    return c.text("Migration failed", 500);
+  }
 });
 
-// Create a book (POST body is JSON)
-app.post("/books", async (c) => {
-  const body = await c.req.json();
-  const result = await kv.set(["books", body.title], body);
-  return c.json(result);
-});
+app.get("/updated", async (c) => {
+  // try fetching
+  const response = await fetch(`${SITE}/updated`);
+  console.log("Response status:", response.status);
+  if (!response.ok) {
+    return c.text("Failed to fetch the site", 500);
+  }
+  const html = await response.text();
+  console.log("Fetched HTML successfully");
+  // get all episodes from the html
+  const regex = /<div class="item">[\s\S]*?<a href="([^"]*)" class="poster[^"]*" data-tip="api\/tooltip\/(\d+)"[\s\S]*?<img[^>]*src="([^"]*)"[\s\S]*?<div class="ep">\s*Ep\s*(\d+)\s*<\/div>[\s\S]*?<\/div>/g;
 
-// Get a book by title
-app.get("/books/:title", async (c) => {
-  const title = c.req.param("title");
-  const result = await kv.get(["books", title]);
-  return c.json(result);
-});
+  for (const match of html.matchAll(regex)) {
+      const [_, link, id, imageUrl, episodeNumber] = match;
+      console.log("Found episode:", episodeNumber, "link:", link, "with ID:", id, "image:", imageUrl);
+      
+      // todo: check if anime already exists, if does not, create a new entry (recover anime data later)
 
-// Delete a book by title
-app.delete("/books/:title", async (c) => {
-  const title = c.req.param("title");
-  await kv.delete(["books", title]);
-  return c.text("");
+      // todo: save the episode to the database
+
+
+      return; // todo: remove this return to process all episodes
+  }
+
+  console.log("Episodes extracted successfully");
+
 });
 
 Deno.serve(app.fetch);
