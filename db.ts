@@ -50,9 +50,8 @@ export async function saveEpisode(episode: {
     await connection.queryObject`
       INSERT INTO episodes (slug, episode_number, anime_id)
       VALUES (${episode.slug}, ${episode.episode_number}, ${episode.anime_id})
-      ON CONFLICT (slug) DO UPDATE SET
-        episode_number = EXCLUDED.episode_number,
-        anime_id = EXCLUDED.anime_id,
+      ON CONFLICT (anime_id, episode_number) DO UPDATE SET
+        slug = EXCLUDED.slug,
         updated_at = CURRENT_TIMESTAMP;
     `;
   } finally {
@@ -72,8 +71,9 @@ export async function saveAnime(anime: {
     await connection.queryObject`
       INSERT INTO animes (id, slug, name, image_url, description)
       VALUES (${anime.id}, ${anime.slug}, ${anime.name}, ${anime.image_url}, ${anime.description})
-      ON CONFLICT (slug) DO UPDATE SET
+      ON CONFLICT (id) DO UPDATE SET
         name = EXCLUDED.name,
+        slug = EXCLUDED.slug,
         image_url = EXCLUDED.image_url,
         description = EXCLUDED.description,
         updated_at = CURRENT_TIMESTAMP;
