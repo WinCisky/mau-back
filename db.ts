@@ -44,14 +44,16 @@ export async function saveEpisode(episode: {
   slug: string;
   episode_number: number;
   anime_id: number;
+  episode_id?: number | null;
 }) {
   const connection = await pool.connect();
   try {
     await connection.queryObject`
-      INSERT INTO episodes (slug, episode_number, anime_id)
-      VALUES (${episode.slug}, ${episode.episode_number}, ${episode.anime_id})
+      INSERT INTO episodes (slug, episode_number, anime_id, id)
+      VALUES (${episode.slug}, ${episode.episode_number}, ${episode.anime_id}, ${episode.episode_id})
       ON CONFLICT (anime_id, episode_number) DO UPDATE SET
         slug = EXCLUDED.slug,
+        id = EXCLUDED.id,
         updated_at = CURRENT_TIMESTAMP;
     `;
   } finally {
@@ -78,6 +80,36 @@ export async function saveAnime(anime: {
         description = EXCLUDED.description,
         updated_at = CURRENT_TIMESTAMP;
     `;
+  } finally {
+    connection.release();
+  }
+}
+
+// return anime slug and episode slug
+export async function getEpisodeSlugInfo(animeId: number, episodeNumber: number) {
+  const connection = await pool.connect();
+  try {
+    const result = await connection.queryObject`
+      SELECT a.slug AS anime_slug, e.slug AS episode_slug
+      FROM animes a
+      JOIN episodes e ON a.id = e.anime_id
+      WHERE a.id = ${animeId} AND e.episode_number = ${episodeNumber};
+    `;
+    return result.rows[0] || null;
+  } finally {
+    connection.release();
+  }
+}
+
+// return episode id from anime id and episode number
+export async function getEpisodeId(animeId: number, episodeNumber: number) {
+  const connection = await pool.connect();
+  try {
+    const result = await connection.queryObject`
+      SELECT id FROM episodes
+      WHERE anime_id = ${animeId} AND episode_number = ${episodeNumber};
+    `;
+    return result.rows[0]?.id || null;
   } finally {
     connection.release();
   }

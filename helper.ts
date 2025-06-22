@@ -1,7 +1,7 @@
 import { saveAnime, saveEpisode } from "./db.ts";
 import { DOMParser } from "jsr:@b-fuze/deno-dom";
 
-export async function storeEpisodesFromHtml(html: string, site: string) {
+export async function storeEpisodesFromHtml(html: string) {
 
     const document = new DOMParser().parseFromString(html, "text/html");
     if (!document) {
@@ -96,4 +96,75 @@ export async function storeEpisodesFromHtml(html: string, site: string) {
         });
     }
     console.log("Episodes extracted successfully");
+}
+
+// fill episodes id
+export async function fillEpisodesFromHtml(html: string, animeId: number) {
+    const document = new DOMParser().parseFromString(html, "text/html");
+    if (!document) {
+        console.error("Failed to parse HTML");
+        return;
+    }
+
+    // Select all items in the film list
+    const items = document.querySelectorAll('.server.active .episode');
+
+    console.log(`Found ${items.length} episodes to process`);
+    const episodeData: Array<{
+        episode_slug: string;
+        episode_id: number;
+        episode_number: number;
+    }> = [];
+
+    items.forEach(item => {
+        const episodeLink = item.querySelector('a');
+        if (!episodeLink) {
+            console.warn("No episode link found for item:", item);
+            return;
+        }
+        const episodeId = episodeLink ? episodeLink.getAttribute('data-episode-id') : null;
+        const episodeNumber = episodeLink ? episodeLink.getAttribute('data-episode-num') : null;
+        const episodeSlug = episodeLink ? episodeLink.getAttribute('data-id') : null;
+
+        if (!episodeId || !episodeNumber || !episodeSlug) {
+            console.warn("Missing episode data for item:", item);
+            return;
+        }
+
+        episodeData.push({
+            episode_slug: episodeSlug,
+            episode_id: parseInt(episodeId, 10),
+            episode_number: parseInt(episodeNumber, 10),
+        });
+    });
+
+    console.log(`Extracted ${episodeData.length} episodes`);
+
+    // save episodes to the database
+    for (const data of episodeData) {
+        await saveEpisode({
+            slug: data.episode_slug,
+            episode_number: data.episode_number,
+            anime_id: animeId,
+            episode_id: data.episode_id,
+        });
+    }
+    console.log("Episodes filled successfully");
+}
+
+export async function getCsrfTokenFromHtml(html: string): Promise<string | null> {
+    const document = new DOMParser().parseFromString(html, "text/html");
+    if (!document) {
+        console.error("Failed to parse HTML");
+        return null;
+    }
+
+    // Find the CSRF token in the meta tag
+    const csrfMeta = document.querySelector('meta[name="csrf-token"]');
+    if (csrfMeta) {
+        return csrfMeta.getAttribute('content') || null;
+    }
+
+    console.warn("CSRF token not found in the HTML");
+    return null;
 }
