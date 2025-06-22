@@ -16,7 +16,7 @@ export async function runMigrations() {
     await connection.queryObject`
       CREATE TABLE IF NOT EXISTS episodes (
         id SERIAL PRIMARY KEY,
-        episode_link TEXT NOT NULL
+        episode_link TEXT NOT NULL,
         video_link TEXT NOT NULL,
         episode_number INTEGER NOT NULL,
         anime_id INTEGER NOT NULL,
