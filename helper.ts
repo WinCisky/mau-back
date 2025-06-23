@@ -1,5 +1,6 @@
 import { saveAnime, saveEpisode } from "./db.ts";
 import { DOMParser } from "jsr:@b-fuze/deno-dom";
+import { WWW_SITE } from "./config.ts";
 
 export async function storeEpisodesFromHtml(html: string) {
 
@@ -167,4 +168,52 @@ export async function getCsrfTokenFromHtml(html: string): Promise<string | null>
 
     console.warn("CSRF token not found in the HTML");
     return null;
+}
+
+export async function getEpisodeLinkFromId(episodeId: number, csrfToken: string, cookie: string): Promise<string | null> {
+    const result = await fetch(`${WWW_SITE}/api/download/${episodeId}`, {
+        "headers": {
+            "accept": "application/json, text/javascript, */*; q=0.01",
+            "accept-language": "it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7",
+            "csrf-token": csrfToken,
+            "priority": "u=1, i",
+            "sec-ch-ua": "\"Chromium\";v=\"136\", \"Google Chrome\";v=\"136\", \"Not.A/Brand\";v=\"99\"",
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": "\"Linux\"",
+            "sec-fetch-dest": "empty",
+            "sec-fetch-mode": "cors",
+            "sec-fetch-site": "same-origin",
+            "x-requested-with": "XMLHttpRequest",
+            "cookie": cookie,
+            "Referrer-Policy": "unsafe-url"
+        },
+        "body": null,
+        "method": "POST"
+    });
+
+    if (!result.ok) {
+        console.error("Failed to fetch the download URL:", result.statusText);
+        return null;
+    }
+
+    const data = await result.json();
+    // console.log("Download URL fetched successfully:", data);
+    if (data.error) {
+        console.error("Error fetching download links:", data.message);
+        return null;
+    }
+    const links = data.links;
+    if (!links || Object.keys(links).length === 0) {
+        console.error("No download links found");
+        return null;
+    }
+    // get alternative links
+    const alternativeLinks = Object.values(links).map(server => {
+        // Assert server is an object
+        const serverObj = server as Record<string, any>;
+        return Object.values(serverObj)[0]?.alternativeLink;
+    }).filter(link => link);
+    // console.log("Alternative links found:", alternativeLinks.length, "links:", alternativeLinks);
+
+    return alternativeLinks.length > 0 ? alternativeLinks[0] : null;
 }

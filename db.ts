@@ -86,11 +86,11 @@ export async function saveAnime(anime: {
 }
 
 // return anime slug and episode slug
-export async function getEpisodeSlugInfo(animeId: number, episodeNumber: number) {
+export async function getEpisodeSlugInfoAndId(animeId: number, episodeNumber: number) {
   const connection = await pool.connect();
   try {
     const result = await connection.queryObject`
-      SELECT a.slug AS anime_slug, e.slug AS episode_slug
+      SELECT a.slug AS anime_slug, e.slug AS episode_slug, e.id AS episode_id
       FROM animes a
       JOIN episodes e ON a.id = e.anime_id
       WHERE a.id = ${animeId} AND e.episode_number = ${episodeNumber};
