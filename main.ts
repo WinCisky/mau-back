@@ -38,6 +38,7 @@ app.get("/updated", async (c) => {
   const html = await response.text();
   // get all episodes from the html
   await storeEpisodesFromHtml(html);
+  return c.text("Episodes updated successfully");
 });
 
 app.get("/url/:anime/:episode", async (c) => {
@@ -75,6 +76,7 @@ app.get("/url/:anime/:episode", async (c) => {
     if (!cookie) {
       return c.text("No cookie found in the response", 500);
     }
+    console.log("Cookie:", cookie);
     // save the cookie to kv
     await kv.set(["cache", "cookie"], cookie, { expireIn: KV_COOKIE_EXPIRATION });
 
@@ -84,10 +86,12 @@ app.get("/url/:anime/:episode", async (c) => {
     if (!csrfToken) {
       return c.text("CSRF token not found", 500);
     }
+    console.log("CSRF Token:", csrfToken);
     // save the csrf token to kv
     await kv.set(["cache", "csrf_token"], csrfToken, { expireIn: KV_CSRF_EXPIRATION });
 
     await fillEpisodesFromHtml(html, animeId);
+    console.log("Episodes filled successfully");
 
     // retrieve the episode ID from anime id and episode number
     episodeId = await getEpisodeId(animeId, episodeNumber);
