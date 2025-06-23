@@ -34,6 +34,9 @@ export async function runMigrations() {
       );
       CREATE INDEX IF NOT EXISTS idx_episodes_anime_id ON episodes (anime_id);
       CREATE INDEX IF NOT EXISTS idx_episodes_episode_number ON episodes (episode_number);
+      ALTER TABLE episodes
+      ADD CONSTRAINT fk_anime_id FOREIGN KEY (anime_id) REFERENCES animes(id)
+      ON DELETE CASCADE;
     `;
   } finally {
     connection.release();
