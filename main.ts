@@ -1,6 +1,5 @@
 import { Hono } from "https://deno.land/x/hono@v3.4.1/mod.ts";
 import { cors } from "https://deno.land/x/hono@v3.4.1/middleware.ts";
-const kv = await Deno.openKv();
 
 import {
   getEpisodeId,
@@ -71,9 +70,11 @@ app.get("/url/:anime/:episode", async (c) => {
   const animeSlug = slugs.anime_slug;
   const episodeSlug = slugs.episode_slug;
 
+
+  const kv = await Deno.openKv();
   let episodeId: number | null = slugs.episode_id;
-  let csrfToken: string | null = await kv.get(["cache", "csrf_token"]) as string | null;
-  let cookie: string | null = await kv.get(["cache", "cookie"]) as string | null;
+  let csrfToken = await kv.get(["cache", "csrf_token"]);
+  let cookie = await kv.get(["cache", "cookie"]);
 
   if (!episodeId || !csrfToken || !cookie) {
     // construct the URL
