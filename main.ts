@@ -69,36 +69,29 @@ app.get("/url/:anime/:episode", async (c) => {
 
   const animeSlug = slugs.anime_slug;
   const episodeSlug = slugs.episode_slug;
-  console.log("Anime Slug:", animeSlug);
-  console.log("Episode Slug:", episodeSlug);
-
 
   const kv = await Deno.openKv();
-  console.log("KV store opened");
   let episodeId: number | null = slugs.episode_id;
-  let csrfToken = await kv.get(["cache", "csrf_token"]);
-  let cookie = await kv.get(["cache", "cookie"]);
-  console.log("Episode ID:", episodeId);
-  console.log("CSRF Token:", csrfToken);
+  let kvCsrfToken = await kv.get(["cache", "csrf_token"]);
+  let kvCookie = await kv.get(["cache", "cookie"]);
+  let csrfToken =  kvCsrfToken ? kvCsrfToken.value : null;
+  let cookie = kvCookie ? kvCookie.value : null;
 
   if (!episodeId || !csrfToken || !cookie) {
     // construct the URL
     const url = `${SITE}/play/${animeSlug}/${episodeSlug}`;
 
     // fetch the page
-    console.log("Fetching episode page:", url);
     const response = await fetch(url);
     if (!response.ok) {
       return c.text("Failed to fetch the episode page", 500);
     }
-    console.log("Response status:", response.status);
     // get the headers with the set-cookie
     const headers = response.headers;
     cookie = headers.get("set-cookie");
     if (!cookie) {
       return c.text("No cookie found in the response", 500);
     }
-    console.log("Cookie:", cookie);
     // save the cookie to kv
     await kv.set(["cache", "cookie"], cookie, { expireIn: KV_COOKIE_EXPIRATION });
 
@@ -108,7 +101,6 @@ app.get("/url/:anime/:episode", async (c) => {
     if (!csrfToken) {
       return c.text("CSRF token not found", 500);
     }
-    console.log("CSRF Token:", csrfToken);
     // save the csrf token to kv
     await kv.set(["cache", "csrf_token"], csrfToken, { expireIn: KV_CSRF_EXPIRATION });
 
