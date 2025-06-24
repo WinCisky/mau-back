@@ -80,10 +80,12 @@ app.get("/url/:anime/:episode", async (c) => {
     const url = `${SITE}/play/${animeSlug}/${episodeSlug}`;
 
     // fetch the page
+    console.log("Fetching episode page:", url);
     const response = await fetch(url);
     if (!response.ok) {
       return c.text("Failed to fetch the episode page", 500);
     }
+    console.log("Response status:", response.status);
     // get the headers with the set-cookie
     const headers = response.headers;
     cookie = headers.get("set-cookie");
