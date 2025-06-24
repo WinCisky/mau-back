@@ -69,12 +69,17 @@ app.get("/url/:anime/:episode", async (c) => {
 
   const animeSlug = slugs.anime_slug;
   const episodeSlug = slugs.episode_slug;
+  console.log("Anime Slug:", animeSlug);
+  console.log("Episode Slug:", episodeSlug);
 
 
   const kv = await Deno.openKv();
+  console.log("KV store opened");
   let episodeId: number | null = slugs.episode_id;
   let csrfToken = await kv.get(["cache", "csrf_token"]);
   let cookie = await kv.get(["cache", "cookie"]);
+  console.log("Episode ID:", episodeId);
+  console.log("CSRF Token:", csrfToken);
 
   if (!episodeId || !csrfToken || !cookie) {
     // construct the URL
