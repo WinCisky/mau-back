@@ -1,4 +1,4 @@
-import { saveAnime, saveEpisode } from "./db.ts";
+import { addAnimeToRelation, createNewRelation, getRelatedAnimeId, saveAnime, saveEpisode } from "./db.ts";
 import { DOMParser } from "jsr:@b-fuze/deno-dom";
 import { WWW_SITE } from "./config.ts";
 
@@ -21,6 +21,7 @@ export async function storeEpisodesFromHtml(html: string) {
         number: number;
         anime_slug: string;
         episode_slug: string;
+        dubbed: boolean;
     }> = [];
 
     items.forEach(item => {
@@ -28,6 +29,7 @@ export async function storeEpisodesFromHtml(html: string) {
         const nameLink = item.querySelector('.name');
         const image = item.querySelector('.poster img');
         const ep = item.querySelector('.ep');
+        const dub = item.querySelector('.dub');
 
         const href = posterLink ? posterLink.getAttribute('href') : null;
         const dataTip = posterLink ? posterLink.getAttribute('data-tip') : null;
@@ -75,6 +77,7 @@ export async function storeEpisodesFromHtml(html: string) {
             number: number,
             anime_slug: animeSlug,
             episode_slug: episodeSlug,
+            dubbed: !!dub
         };
 
         extractedData.push(itemData);
@@ -89,6 +92,7 @@ export async function storeEpisodesFromHtml(html: string) {
             slug: data.anime_slug,
             name: data.name,
             image_url: data.img,
+            dubbed: data.dubbed,
         });
         await saveEpisode({
             slug: data.episode_slug,
@@ -151,6 +155,87 @@ export async function fillEpisodesFromHtml(html: string, animeId: number) {
         });
     }
     console.log("Episodes filled successfully");
+
+    // check if anime is related to other animes
+    let relatedAnimeId = await getRelatedAnimeId(animeId);
+    if (!relatedAnimeId) {
+        // create a new related anime entry
+        relatedAnimeId = await createNewRelation(animeId);
+    }
+
+    if (!relatedAnimeId) {
+        console.error("Failed to create or retrieve related anime ID");
+        return;
+    }
+
+    // fill with the related anime
+    const relatedAnimes = document.querySelectorAll('.simple-film-list .related .item');
+    const relatedAnimeData: Array<{
+        id: number;
+        slug: string;
+        name: string | null;
+        image_url: string | null;
+        dubbed: boolean | null;
+    }> = [];
+
+    // <div class="item">
+    //     <img loading="lazy" src="https://img.animeworld.ac/locandine/Iputw.jpg" class="thumb tooltipstered" alt="Kaiju No. 8 (ITA)" data-tip="api/tooltip/5196">
+    //     <div class="info" data-tippy-content="13 Aprile 2024">
+    //         <a href="/play/kaiju-no-8-ita.pTJj4" data-jtitle="Kaijuu 8-gou (ITA)" class="name">Kaiju No. 8 (ITA)</a>
+    //         <br>
+    //         <p>Anime - 2024 - 23 min/ep</p>
+    //     </div>
+    // </div>
+
+    // id is 5196 (last part of data-tip)
+    // slug is kaiju-no-8-ita.pTJj4
+    // name is Kaiju No. 8 (ITA)
+    // image_url is https://img.animeworld.ac/locandine/Iputw.jpg
+    // dubbed is true if the title has (ITA) in the name
+
+    relatedAnimes.forEach(item => {
+        const posterLink = item.querySelector('.thumb');
+        const nameLink = item.querySelector('.name');
+        const image = posterLink ? posterLink.getAttribute('src') : null;
+        const dataTip = posterLink ? posterLink.getAttribute('data-tip') : null;
+
+        if (!dataTip) {
+            console.warn("No data-tip found for related anime item:", item);
+            return;
+        }
+
+        const id = parseInt(dataTip.split('/').pop() || '', 10);
+        if (isNaN(id)) {
+            console.warn("Invalid ID found in data-tip:", dataTip);
+            return;
+        }
+
+        const slug = nameLink ? nameLink.getAttribute('href')?.split('/').pop() || '' : '';
+        const name = nameLink ? nameLink.textContent?.trim() || null : null;
+        const dubbed = name ? name.includes('(ITA)') : null; // Check if the name contains (ITA)
+
+        if (!slug || !name) {
+            console.warn("Missing slug or name for related anime item:", item);
+            return;
+        }
+
+        relatedAnimeData.push({
+            id: id,
+            slug: slug,
+            name: name,
+            image_url: image,
+            dubbed: dubbed,
+        });
+    });
+
+    // Save related anime data to the database
+    for (const data of relatedAnimeData) {
+        await saveAnime(data);
+        
+        // Save the relation to the related anime
+        await addAnimeToRelation(relatedAnimeId, data.id);
+    }
+    console.log("Related anime filled successfully");
 }
 
 export async function getCsrfTokenFromHtml(html: string): Promise<string | null> {

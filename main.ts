@@ -9,19 +9,21 @@ import {
 import { fillEpisodesFromHtml, getCsrfTokenFromHtml, getEpisodeLinkFromId, storeEpisodesFromHtml } from "./helper.ts";
 import { KV_COOKIE_EXPIRATION, KV_CSRF_EXPIRATION, SITE, WWW_SITE } from "./config.ts";
 
-Deno.cron("sample cron", "30 */6 * * *", async () => {
-  // same as the /updated endpoint
-  console.log("Running cron job to update episodes");
-  const response = await fetch(`${SITE}/updated`);
-  if (!response.ok) {
-    console.error("Failed to fetch the /updated endpoint");
-    return;
-  }
-  const html = await response.text();
-  // get all episodes from the html
-  await storeEpisodesFromHtml(html);
-  console.log("Episodes updated successfully from cron job");
-});
+if (typeof Deno.cron == "function") {
+  Deno.cron("update episodes", "30 */6 * * *", async () => {
+    // same as the /updated endpoint
+    console.log("Running cron job to update episodes");
+    const response = await fetch(`${SITE}/updated`);
+    if (!response.ok) {
+      console.error("Failed to fetch the /updated endpoint");
+      return;
+    }
+    const html = await response.text();
+    // get all episodes from the html
+    await storeEpisodesFromHtml(html);
+    console.log("Episodes updated successfully from cron job");
+  });
+}
 
 const app = new Hono();
 
