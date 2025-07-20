@@ -7,7 +7,7 @@ import {
   runMigrations
 } from "./db.ts";
 import { fillEpisodesFromHtml, getCsrfTokenFromHtml, getEpisodeLinkFromId, storeEpisodesFromHtml } from "./helper.ts";
-import { KV_COOKIE_EXPIRATION, KV_CSRF_EXPIRATION, SITE, WWW_SITE } from "./config.ts";
+import { KV_COOKIE_EXPIRATION, KV_CSRF_EXPIRATION, KV_EPISODE_LINK_EXPIRATION, SITE, WWW_SITE } from "./config.ts";
 
 if (typeof Deno.cron == "function") {
   Deno.cron("update episodes", "30 */6 * * *", async () => {
@@ -74,6 +74,12 @@ app.get("/url/:anime/:episode", async (c) => {
 
   const kv = await Deno.openKv();
   let episodeId: number | null = slugs.episode_id;
+
+  let cachedLink = await kv.get(["cache", "episode_link", animeSlug, episodeSlug]);
+  if (cachedLink) {
+    return c.json(cachedLink.value);
+  }
+
   let kvCsrfToken = await kv.get(["cache", "csrf_token"]);
   let kvCookie = await kv.get(["cache", "cookie"]);
   let csrfToken =  kvCsrfToken ? kvCsrfToken.value : null;
@@ -120,6 +126,9 @@ app.get("/url/:anime/:episode", async (c) => {
   if (!link) {
     return c.text("Failed to retrieve episode link", 500);
   }
+
+  // cache the link in kv
+  await kv.set(["cache", "episode_link", animeSlug, episodeSlug], link, { expireIn: KV_EPISODE_LINK_EXPIRATION });
 
   return c.json(link);
 });
