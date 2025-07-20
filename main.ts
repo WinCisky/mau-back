@@ -2,7 +2,8 @@ import { Hono } from "https://deno.land/x/hono@v3.4.1/mod.ts";
 import { cors } from "https://deno.land/x/hono@v3.4.1/middleware.ts";
 
 import {
-  getEpisodeId,
+  getAnimeById,
+  getEpisode,
   getEpisodeSlugInfoAndId,
   runMigrations
 } from "./db.ts";
@@ -63,21 +64,30 @@ app.get("/url/:anime/:episode", async (c) => {
     return c.text("Anime ID and episode number are required", 400);
   }
 
+  const kv = await Deno.openKv();
+
   // get the anime slug and episode slug from the database
   const slugs = await getEpisodeSlugInfoAndId(animeId, episodeNumber);
+  let anime = null as any | null;
   if (!slugs) {
-    return c.text("Anime or episode not found", 404);
+    // return c.text("Anime or episode not found", 404);
+    // check if the anime exists
+    anime = await getAnimeById(animeId);
+    if (!anime) {
+      return c.text("Anime not found", 404);
+    }
   }
 
-  const animeSlug = slugs.anime_slug;
-  const episodeSlug = slugs.episode_slug;
+  const animeSlug = slugs ? slugs.anime_slug : anime.slug;
+  let episodeSlug = slugs ? slugs.episode_slug : null;
 
-  const kv = await Deno.openKv();
-  let episodeId: number | null = slugs.episode_id;
+  let episodeId: number | null = slugs ? slugs.episode_id : null;
 
-  let cachedLink = await kv.get(["cache", "episode_link", animeSlug, episodeSlug]);
-  if (cachedLink && cachedLink.value) {
-    return c.json(cachedLink.value);
+  if (episodeId) {
+    let cachedLink = await kv.get(["cache", "episode_link", animeSlug, episodeSlug]);
+    if (cachedLink && cachedLink.value) {
+      return c.json(cachedLink.value);
+    }
   }
 
   let kvCsrfToken = await kv.get(["cache", "csrf_token"]);
@@ -116,13 +126,17 @@ app.get("/url/:anime/:episode", async (c) => {
     console.log("Episodes filled successfully");
 
     // retrieve the episode ID from anime id and episode number
-    episodeId = await getEpisodeId(animeId, episodeNumber);
-    if (!episodeId) {
+    const episode = await getEpisode(animeId, episodeNumber);
+    console.log("Episode retrieved:", episode);
+    episodeId = episode ? episode.id : null;
+    episodeSlug = episode ? episode.slug : null;
+    if (!episodeId || !episodeSlug) {
       return c.text("Episode not found", 404);
     }
   }
 
   const link = await getEpisodeLinkFromId(episodeId, csrfToken, cookie);
+  console.log
   if (!link) {
     return c.text("Failed to retrieve episode link", 500);
   }

@@ -171,15 +171,29 @@ export async function getEpisodeSlugInfoAndId(animeId: number, episodeNumber: nu
   }
 }
 
-// return episode id from anime id and episode number
-export async function getEpisodeId(animeId: number, episodeNumber: number) {
+export async function getAnimeById(animeId: number) {
   const connection = await pool.connect();
   try {
     const result = await connection.queryObject`
-      SELECT id FROM episodes
+      SELECT id, slug, name, image_url, description, dubbed
+      FROM animes
+      WHERE id = ${animeId};
+    `;
+    return result.rows[0] || null;
+  } finally {
+    connection.release();
+  }
+}
+
+// return episode id from anime id and episode number
+export async function getEpisode(animeId: number, episodeNumber: number) {
+  const connection = await pool.connect();
+  try {
+    const result = await connection.queryObject`
+      SELECT id, slug FROM episodes
       WHERE anime_id = ${animeId} AND episode_number = ${episodeNumber};
     `;
-    return result.rows[0]?.id || null;
+    return result.rows[0] || null;
   } finally {
     connection.release();
   }
