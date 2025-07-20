@@ -43,10 +43,22 @@ export async function runMigrations() {
         PRIMARY KEY (id, anime_id)
       );
 
+      CREATE TABLE IF NOT EXISTS seasonal (
+        id SERIAL PRIMARY KEY,
+        anime_id INTEGER NOT NULL,
+        year INTEGER NOT NULL,
+        season TEXT NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE (anime_id, year, season)
+      );
+
       CREATE INDEX IF NOT EXISTS idx_episodes_anime_id ON episodes (anime_id);
       CREATE INDEX IF NOT EXISTS idx_episodes_episode_number ON episodes (episode_number);
       CREATE INDEX IF NOT EXISTS idx_related_anime_id ON related (anime_id);
       CREATE INDEX IF NOT EXISTS idx_related_id ON related (id);
+      CREATE INDEX IF NOT EXISTS idx_seasonal_year ON seasonal (year);
+      CREATE INDEX IF NOT EXISTS idx_seasonal_season ON seasonal (season);
 
       DO $$
       BEGIN
@@ -120,6 +132,19 @@ export async function saveAnime(anime: {
         description = EXCLUDED.description,
         updated_at = CURRENT_TIMESTAMP,
         dubbed = EXCLUDED.dubbed;
+    `;
+  } finally {
+    connection.release();
+  }
+}
+
+export async function saveSeasonal(animeId: number, year: number, season: string) {
+  const connection = await pool.connect();
+  try {
+    await connection.queryObject`
+      INSERT INTO seasonal (anime_id, year, season)
+      VALUES (${animeId}, ${year}, ${season})
+      ON CONFLICT (anime_id, year, season) DO NOTHING;
     `;
   } finally {
     connection.release();

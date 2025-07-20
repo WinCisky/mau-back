@@ -1,4 +1,4 @@
-import { addAnimeToRelation, createNewRelation, getRelatedAnimeId, saveAnime, saveEpisode } from "./db.ts";
+import { addAnimeToRelation, createNewRelation, getRelatedAnimeId, saveAnime, saveEpisode, saveSeasonal } from "./db.ts";
 import { DOMParser } from "jsr:@b-fuze/deno-dom";
 import { WWW_SITE } from "./config.ts";
 
@@ -301,4 +301,62 @@ export async function getEpisodeLinkFromId(episodeId: number, csrfToken: string,
     // console.log("Alternative links found:", alternativeLinks.length, "links:", alternativeLinks);
 
     return alternativeLinks.length > 0 ? alternativeLinks[0] : null;
+}
+
+export async function fillSeasonalFromHtml(html: string, year: number, season: string) {
+    const document = new DOMParser().parseFromString(html, "text/html");
+    if (!document) {
+        console.error("Failed to parse HTML");
+        return;
+    }
+
+    // I only need the anime id
+    const items = document.querySelectorAll('.film-listnext .item');
+    const seasonalData: Array<{
+        anime_id: number;
+    }> = [];
+
+    items.forEach(item => {
+        const posterLink = item.querySelector('.poster');
+        const dataTip = posterLink ? posterLink.getAttribute('data-tip') : null;
+
+        if (!dataTip) {
+            console.warn("No data-tip found for seasonal item:", item);
+            return;
+        }
+
+        const id = parseInt(dataTip.split('/').pop() || '', 10);
+        if (isNaN(id)) {
+            console.warn("Invalid ID found in data-tip:", dataTip);
+            return;
+        }
+
+        seasonalData.push({
+            anime_id: id,
+        });
+    });
+
+    // Save seasonal data to the database
+    for (const data of seasonalData) {
+        await saveSeasonal(data.anime_id, year, season);
+    }
+}
+
+export function getCurrentSeason(): string {
+    const date = new Date();
+    const month = date.getMonth();
+
+    // Winter (January-March)
+    // Spring (April-June)
+    // Summer (July-September)
+    // Fall (October-December)
+    if (month >= 0 && month <= 2) {
+        return "winter";
+    } else if (month >= 3 && month <= 5) {
+        return "spring";
+    } else if (month >= 6 && month <= 8) {
+        return "summer";
+    } else {
+        return "fall";
+    }
 }

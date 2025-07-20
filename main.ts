@@ -7,7 +7,7 @@ import {
   getEpisodeSlugInfoAndId,
   runMigrations
 } from "./db.ts";
-import { fillEpisodesFromHtml, getCsrfTokenFromHtml, getEpisodeLinkFromId, storeEpisodesFromHtml } from "./helper.ts";
+import { fillEpisodesFromHtml, fillSeasonalFromHtml, getCsrfTokenFromHtml, getCurrentSeason, getEpisodeLinkFromId, storeEpisodesFromHtml } from "./helper.ts";
 import { KV_COOKIE_EXPIRATION, KV_CSRF_EXPIRATION, KV_EPISODE_LINK_EXPIRATION, SITE, WWW_SITE } from "./config.ts";
 
 if (typeof Deno.cron == "function") {
@@ -24,6 +24,22 @@ if (typeof Deno.cron == "function") {
     await storeEpisodesFromHtml(html);
     console.log("Episodes updated successfully from cron job");
   });
+
+  Deno.cron("update seasonal", "10 1 1 * *", async () => {
+    // same as the /seasonal endpoint
+    console.log("Running cron job to update seasonal data");
+    const season = getCurrentSeason();
+    const year = new Date().getFullYear();
+    const response = await fetch(`${SITE}/upcoming/${year}/${season}`);
+    if (!response.ok) {
+      console.error("Failed to fetch the /seasonal endpoint");
+      return;
+    }
+    const html = await response.text();
+    // process the seasonal data from the html
+    await fillSeasonalFromHtml(html, year, season);
+    console.log("Seasonal data updated successfully from cron job");
+  });
 }
 
 const app = new Hono();
@@ -34,6 +50,10 @@ app.use('*', cors({
   allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowHeaders: ['Content-Type', 'Authorization'],
 }));
+
+app.get("/test", async (c) => {
+  return c.text("Test endpoint");
+});
 
 app.get("/migrate", async (c) => {
   try {
