@@ -76,7 +76,7 @@ app.get("/url/:anime/:episode", async (c) => {
   let episodeId: number | null = slugs.episode_id;
 
   let cachedLink = await kv.get(["cache", "episode_link", animeSlug, episodeSlug]);
-  if (cachedLink) {
+  if (cachedLink && cachedLink.value) {
     return c.json(cachedLink.value);
   }
 
