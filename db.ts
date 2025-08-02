@@ -100,7 +100,7 @@ export async function saveEpisode(episode: {
 }) {
   const connection = await pool.connect();
   try {
-    const createdAt = episode.backdate ? '1990-01-01 00:00:00' : 'CURRENT_TIMESTAMP';
+    const createdAt = episode.backdate ? '1990-01-01 00:00:00' : 'NOW()';
     
     await connection.queryObject`
       INSERT INTO episodes (slug, episode_number, anime_id, id, created_at)
@@ -108,7 +108,7 @@ export async function saveEpisode(episode: {
       ON CONFLICT (anime_id, episode_number) DO UPDATE SET
         slug = EXCLUDED.slug,
         id = EXCLUDED.id,
-        updated_at = CURRENT_TIMESTAMP;
+        updated_at = NOW();
     `;
   } finally {
     connection.release();
