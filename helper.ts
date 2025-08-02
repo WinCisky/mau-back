@@ -98,6 +98,7 @@ export async function storeEpisodesFromHtml(html: string) {
             slug: data.episode_slug,
             episode_number: data.number,
             anime_id: data.id,
+            backdate: true
         });
     }
     console.log("Episodes extracted successfully");
