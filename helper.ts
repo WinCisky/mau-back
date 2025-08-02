@@ -97,8 +97,7 @@ export async function storeEpisodesFromHtml(html: string) {
         await saveEpisode({
             slug: data.episode_slug,
             episode_number: data.number,
-            anime_id: data.id,
-            backdate: true
+            anime_id: data.id
         });
     }
     console.log("Episodes extracted successfully");
@@ -153,6 +152,7 @@ export async function fillEpisodesFromHtml(html: string, animeId: number) {
             episode_number: data.episode_number,
             anime_id: animeId,
             episode_id: data.episode_id,
+            backdate: true
         });
     }
     console.log("Episodes filled successfully");
