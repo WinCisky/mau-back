@@ -256,7 +256,7 @@ export async function getCsrfTokenFromHtml(html: string): Promise<string | null>
     return null;
 }
 
-export async function getEpisodeLinkFromId(episodeId: number, csrfToken: string, cookie: string): Promise<string | null> {
+export async function getEpisodeLinkFromId(episodeId: number, csrfToken: string, cookie: string): Promise<string[] | null> {
     const result = await fetch(`${WWW_SITE}/api/download/${episodeId}`, {
         "headers": {
             "accept": "application/json, text/javascript, */*; q=0.01",
@@ -283,7 +283,7 @@ export async function getEpisodeLinkFromId(episodeId: number, csrfToken: string,
     }
 
     const data = await result.json();
-    console.log("Download URL fetched successfully:", data);
+    //console.log("Download URL fetched successfully:", data);
     if (data.error) {
         console.error("Error fetching download links:", data.message);
         return null;
@@ -293,16 +293,21 @@ export async function getEpisodeLinkFromId(episodeId: number, csrfToken: string,
         console.error("No download links found");
         return null;
     }
-    console.log("Download links found:", Object.keys(links).length);
-    // get alternative links
-    const alternativeLinks = Object.values(links).map(server => {
-        // Assert server is an object
-        const serverObj = server as Record<string, any>;
-        return Object.values(serverObj)[0]?.alternativeLink;
-    }).filter(link => link);
-    console.log("Alternative links found:", alternativeLinks.length, "links:", alternativeLinks);
+    //console.log("Download links found:", Object.keys(links).length);
 
-    return alternativeLinks.length > 0 ? alternativeLinks[0] : null;
+    // Extract all alternativeLink values from all servers
+    const alternativeLinks: string[] = [];
+    for (const server of Object.values(links)) {
+        const serverObj = server as Record<string, any>;
+        for (const value of Object.values(serverObj)) {
+            if (value && typeof value === 'object' && value.alternativeLink) {
+                alternativeLinks.push(value.alternativeLink);
+            }
+        }
+    }
+    //console.log("Alternative links found:", alternativeLinks.length, "links:", alternativeLinks);
+
+    return alternativeLinks.length > 0 ? alternativeLinks : null;
 }
 
 export async function fillSeasonalFromHtml(html: string, year: number, season: string) {
