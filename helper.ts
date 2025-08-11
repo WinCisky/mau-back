@@ -283,7 +283,7 @@ export async function getEpisodeLinkFromId(episodeId: number, csrfToken: string,
     }
 
     const data = await result.json();
-    // console.log("Download URL fetched successfully:", data);
+    console.log("Download URL fetched successfully:", data);
     if (data.error) {
         console.error("Error fetching download links:", data.message);
         return null;
@@ -293,13 +293,14 @@ export async function getEpisodeLinkFromId(episodeId: number, csrfToken: string,
         console.error("No download links found");
         return null;
     }
+    console.log("Download links found:", Object.keys(links).length);
     // get alternative links
     const alternativeLinks = Object.values(links).map(server => {
         // Assert server is an object
         const serverObj = server as Record<string, any>;
         return Object.values(serverObj)[0]?.alternativeLink;
     }).filter(link => link);
-    // console.log("Alternative links found:", alternativeLinks.length, "links:", alternativeLinks);
+    console.log("Alternative links found:", alternativeLinks.length, "links:", alternativeLinks);
 
     return alternativeLinks.length > 0 ? alternativeLinks[0] : null;
 }

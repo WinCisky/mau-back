@@ -156,7 +156,6 @@ app.get("/url/:anime/:episode", async (c) => {
   }
 
   const link = await getEpisodeLinkFromId(episodeId, csrfToken, cookie);
-  console.log
   if (!link) {
     return c.text("Failed to retrieve episode link", 500);
   }
