@@ -293,7 +293,7 @@ export async function getEpisodeLinkFromId(episodeId: number, csrfToken: string,
         console.error("No download links found");
         return null;
     }
-    //console.log("Download links found:", Object.keys(links).length);
+    console.log("Download links found:", Object.keys(links).length);
 
     // Extract all alternativeLink values from all servers
     const alternativeLinks: string[] = [];
@@ -305,7 +305,7 @@ export async function getEpisodeLinkFromId(episodeId: number, csrfToken: string,
             }
         }
     }
-    //console.log("Alternative links found:", alternativeLinks.length, "links:", alternativeLinks);
+    console.log("Alternative links found:", alternativeLinks.length, "links:", alternativeLinks);
 
     return alternativeLinks.length > 0 ? alternativeLinks : null;
 }
