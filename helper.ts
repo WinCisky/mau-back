@@ -2,6 +2,7 @@ import { SupabaseClient } from "jsr:@supabase/supabase-js@2";
 import { Database } from './database.types.ts'
 
 const CACHE_TTL_MS = 10 * 60 * 1000;
+const ANIME_EPISODES_REFRESH_MS = 24 * 60 * 60 * 1000;
 const ANIMEWORLD_BASE_URL = "https://www.animeworld.ac";
 
 export const corsHeaders = {
@@ -129,19 +130,22 @@ async function populateEpisodesForAnime(
     supabase: SupabaseClient<Database>,
     animeId: number,
 ): Promise<PopulateResult> {
+  const freshAfter = new Date(Date.now() - ANIME_EPISODES_REFRESH_MS).toISOString();
+
   const { data: animeRow, error: animeError } = await supabase
     .from("animes")
-    .select("id, slug")
+    .select("id, slug, updated_at")
     .eq("id", animeId)
+    .lt("updated_at", freshAfter)
     .limit(1)
-    .single();
+    .maybeSingle();
 
   if (animeError) {
     return { ok: false, status: 500, error: animeError.message };
   }
 
   if (!animeRow?.id) {
-    return { ok: false, status: 404, error: "anime not found" };
+    return { ok: false, status: 404, error: "anime not found or already updated" };
   }
 
   const page = await fetchAnimeworldPlayPage(animeRow.slug);
