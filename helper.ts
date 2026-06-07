@@ -1,369 +1,581 @@
-import { addAnimeToRelation, createNewRelation, getRelatedAnimeId, saveAnime, saveEpisode, saveSeasonal } from "./db.ts";
-import { DOMParser } from "jsr:@b-fuze/deno-dom";
-import { WWW_SITE } from "./config.ts";
+import { SupabaseClient } from "jsr:@supabase/supabase-js@2";
 
-export async function storeEpisodesFromHtml(html: string) {
+const CACHE_TTL_MS = 10 * 60 * 1000;
+const ANIMEWORLD_BASE_URL = "https://www.animeworld.ac";
 
-    const document = new DOMParser().parseFromString(html, "text/html");
-    if (!document) {
-        console.error("Failed to parse HTML");
-        return;
-    }
+export const corsHeaders = {
+  "access-control-allow-origin": "*",
+  "access-control-allow-headers":
+  "authorization, x-client-info, apikey, content-type",
+  "access-control-allow-methods": "GET, OPTIONS",
+};
 
-    // Select all items in the film list
-    const items = document.querySelectorAll('.film-list .item');
+export async function handleLink(supabase: SupabaseClient, params: URLSearchParams): Promise<Response> {
+  const id = params.get("id");
 
-    // Extract data from each item
-    const extractedData: Array<{
-        id: number;
-        img: string | null;
-        name: string | null;
-        number: number;
-        anime_slug: string;
-        episode_slug: string;
-        dubbed: boolean;
-    }> = [];
+  if (!id) {
+    return json({ error: "missing id value" }, 400);
+  }
 
-    items.forEach(item => {
-        const posterLink = item.querySelector('.poster');
-        const nameLink = item.querySelector('.name');
-        const image = item.querySelector('.poster img');
-        const ep = item.querySelector('.ep');
-        const dub = item.querySelector('.dub');
+  const cachedGrabber = await getCachedGrabber(supabase, id);
 
-        const href = posterLink ? posterLink.getAttribute('href') : null;
-        const dataTip = posterLink ? posterLink.getAttribute('data-tip') : null;
+  if (cachedGrabber) {
+    return json({ grabber: cachedGrabber });
+  }
 
-        // Try to extract episode number from URL
-        let number: number | null = null;
-        // trim ep content, divide it by space and take the last part
-        if (ep && ep.textContent) {
-            const epText = ep.textContent.trim();
-            const parts = epText.split(' ');
-            const lastPart = parts[parts.length - 1];
-            const epNumberMatch = lastPart.match(/(\d+)/);
-            if (epNumberMatch && epNumberMatch[1]) {
-                number = parseInt(epNumberMatch[1], 10);
-            }
-        }
-        // split href in anime slug and episode slug
-        // e.g., "/play/maebashi-witches.HjdLI/hqq831" becomes ["maebashi-witches.HjdLI", "hqq831"]
-        const hrefParts = href ? href.split('/') : [];
-        // if hrefParts has less than 2 parts, we can't extract the anime slug and episode slug
-        if (hrefParts.length < 2) {
-            console.warn("Invalid href format:", href);
-            return;
-        }
-        const animeSlug = hrefParts[hrefParts.length - 2]; // e.g., "maebashi-witches.HjdLI"
-        const episodeSlug = hrefParts[hrefParts.length - 1]; // e.g., "hqq831"
-        // grab the last part of the data-tip, which is the id (e.g., "api/tooltip/12345")
-        const id = dataTip ? parseInt(dataTip.split('/').pop(), 10) : null;
-        const img = image ? image.getAttribute('src') : null;
-        const name = nameLink && nameLink.textContent ? nameLink.textContent.trim() : null;
+  const { data: episodeRows, error: episodeError } = await supabase
+    .from("episodes")
+    .select("animes!fk_episodes_anime_id ( slug )")
+    .eq("slug", id)
+    .limit(1);
 
-        if (id === null || isNaN(id)) {
-            console.warn("No valid ID found for item:", item);
-            return;
-        }
-        if (number === null || isNaN(number)) {
-            console.warn("No valid episode number found for item:", item);
-            return;
-        }
+  if (episodeError) {
+    return json({ error: episodeError.message }, 500);
+  }
 
-        const itemData = {
-            id: id,
-            img: img,
-            name: name,
-            number: number,
-            anime_slug: animeSlug,
-            episode_slug: episodeSlug,
-            dubbed: !!dub
-        };
+//   const animeSlug = episodeRows?.[0]?.animes?.slug;
+  const animeSlug = episodeRows?.[0]?.animes?.[0]?.slug;
 
-        extractedData.push(itemData);
-    });
+  if (!animeSlug) {
+    return json({ error: "not found" }, 404);
+  }
 
-    // console.log(extractedData);
+  const animeworldPayload = await fetchAnimeworldEpisodeInfo(id, animeSlug);
 
-    // save anime and episodes to the database
-    for (const data of extractedData) {
-        await saveAnime({
-            id: data.id,
-            slug: data.anime_slug,
-            name: data.name,
-            image_url: data.img,
-            dubbed: data.dubbed,
-        });
-        await saveEpisode({
-            slug: data.episode_slug,
-            episode_number: data.number,
-            anime_id: data.id
-        });
-    }
-    console.log("Episodes extracted successfully");
+  const grabber = getStringProperty(animeworldPayload, "grabber");
+
+  if (grabber) {
+    await cacheGrabber(supabase, id, grabber);
+  }
+
+  return json(animeworldPayload);
 }
 
-// fill episodes id
-export async function fillEpisodesFromHtml(html: string, animeId: number) {
-    const document = new DOMParser().parseFromString(html, "text/html");
-    if (!document) {
-        console.error("Failed to parse HTML");
-        return;
-    }
+export async function handleEpisodes(supabase: SupabaseClient, params: URLSearchParams): Promise<Response> {
+  const anime = params.get("anime");
 
-    // Select all items in the film list
-    const items = document.querySelectorAll('.server.active .episode');
+  if (!anime) {
+    return json({ error: "missing anime value" }, 400);
+  }
 
-    console.log(`Found ${items.length} episodes to process`);
-    const episodeData: Array<{
-        episode_slug: string;
-        episode_id: number;
-        episode_number: number;
-    }> = [];
+  const populated = await populateEpisodesForAnime(supabase, anime);
 
-    items.forEach(item => {
-        const episodeLink = item.querySelector('a');
-        if (!episodeLink) {
-            console.warn("No episode link found for item:", item);
-            return;
-        }
-        const episodeId = episodeLink ? episodeLink.getAttribute('data-episode-id') : null;
-        const episodeNumber = episodeLink ? episodeLink.getAttribute('data-episode-num') : null;
-        const episodeSlug = episodeLink ? episodeLink.getAttribute('data-id') : null;
+  if (!populated.ok) {
+    return json({ error: populated.error }, populated.status);
+  }
 
-        if (!episodeId || !episodeNumber || !episodeSlug) {
-            console.warn("Missing episode data for item:", item);
-            return;
-        }
+  const { data, error } = await supabase
+    .from("episodes")
+    .select(
+      "id, slug, episode_number, created_at, animes!fk_episodes_anime_id!inner ( slug )",
+    )
+    .eq("animes.slug", anime)
+    .order("episode_number", { ascending: true });
 
-        episodeData.push({
-            episode_slug: episodeSlug,
-            episode_id: parseInt(episodeId, 10),
-            episode_number: parseInt(episodeNumber, 10),
-        });
-    });
+  if (error) {
+    return json({ error: error.message }, 500);
+  }
 
-    console.log(`Extracted ${episodeData.length} episodes`);
+  const episodes = data ?? [];
+  const episodeNumbers = episodes
+    .map((episode) => episode.episode_number)
+    .filter((episodeNumber): episodeNumber is number =>
+      typeof episodeNumber === "number"
+    );
 
-    // save episodes to the database
-    for (const data of episodeData) {
-        await saveEpisode({
-            slug: data.episode_slug,
-            episode_number: data.episode_number,
-            anime_id: animeId,
-            episode_id: data.episode_id,
-            backdate: true
-        });
-    }
-    console.log("Episodes filled successfully");
-
-    // check if anime is related to other animes
-    let relatedAnimeId = await getRelatedAnimeId(animeId);
-    if (!relatedAnimeId) {
-        // create a new related anime entry
-        relatedAnimeId = await createNewRelation(animeId);
-    }
-
-    if (!relatedAnimeId) {
-        console.error("Failed to create or retrieve related anime ID");
-        return;
-    }
-
-    // fill with the related anime
-    const relatedAnimes = document.querySelectorAll('.simple-film-list .related .item');
-    const relatedAnimeData: Array<{
-        id: number;
-        slug: string;
-        name: string | null;
-        image_url: string | null;
-        dubbed: boolean | null;
-    }> = [];
-
-    // <div class="item">
-    //     <img loading="lazy" src="https://img.animeworld.ac/locandine/Iputw.jpg" class="thumb tooltipstered" alt="Kaiju No. 8 (ITA)" data-tip="api/tooltip/5196">
-    //     <div class="info" data-tippy-content="13 Aprile 2024">
-    //         <a href="/play/kaiju-no-8-ita.pTJj4" data-jtitle="Kaijuu 8-gou (ITA)" class="name">Kaiju No. 8 (ITA)</a>
-    //         <br>
-    //         <p>Anime - 2024 - 23 min/ep</p>
-    //     </div>
-    // </div>
-
-    // id is 5196 (last part of data-tip)
-    // slug is kaiju-no-8-ita.pTJj4
-    // name is Kaiju No. 8 (ITA)
-    // image_url is https://img.animeworld.ac/locandine/Iputw.jpg
-    // dubbed is true if the title has (ITA) in the name
-
-    relatedAnimes.forEach(item => {
-        const posterLink = item.querySelector('.thumb');
-        const nameLink = item.querySelector('.name');
-        const image = posterLink ? posterLink.getAttribute('src') : null;
-        const dataTip = posterLink ? posterLink.getAttribute('data-tip') : null;
-
-        if (!dataTip) {
-            console.warn("No data-tip found for related anime item:", item);
-            return;
-        }
-
-        const id = parseInt(dataTip.split('/').pop() || '', 10);
-        if (isNaN(id)) {
-            console.warn("Invalid ID found in data-tip:", dataTip);
-            return;
-        }
-
-        const slug = nameLink ? nameLink.getAttribute('href')?.split('/').pop() || '' : '';
-        const name = nameLink ? nameLink.textContent?.trim() || null : null;
-        const dubbed = name ? name.includes('(ITA)') : null; // Check if the name contains (ITA)
-
-        if (!slug || !name) {
-            console.warn("Missing slug or name for related anime item:", item);
-            return;
-        }
-
-        relatedAnimeData.push({
-            id: id,
-            slug: slug,
-            name: name,
-            image_url: image,
-            dubbed: dubbed,
-        });
-    });
-
-    // Save related anime data to the database
-    for (const data of relatedAnimeData) {
-        await saveAnime(data);
-        
-        // Save the relation to the related anime
-        await addAnimeToRelation(relatedAnimeId, data.id);
-    }
-    console.log("Related anime filled successfully");
+  return json({
+    episodes,
+    first_episode_number: episodeNumbers.at(0) ?? null,
+    last_episode_number: episodeNumbers.at(-1) ?? null,
+  });
 }
 
-export async function getCsrfTokenFromHtml(html: string): Promise<string | null> {
-    const document = new DOMParser().parseFromString(html, "text/html");
-    if (!document) {
-        console.error("Failed to parse HTML");
-        return null;
-    }
+export async function handleSyncLatestEpisodes(supabase: SupabaseClient, params: URLSearchParams): Promise<Response> {
+  const pages = parsePositiveInteger(params.get("pages"), 1);
 
-    // Find the CSRF token in the meta tag
-    const csrfMeta = document.querySelector('meta[name="csrf-token"]');
-    if (csrfMeta) {
-        return csrfMeta.getAttribute('content') || null;
-    }
+  if (pages > 5) {
+    return json({ error: "pages must be between 1 and 5" }, 400);
+  }
 
-    console.warn("CSRF token not found in the HTML");
-    return null;
+  const result = await syncLatestAnimeworldEpisodes(supabase, pages);
+
+  return json(result);
 }
 
-export async function getEpisodeLinkFromId(episodeId: number, csrfToken: string, cookie: string): Promise<string[] | null> {
-    const result = await fetch(`${WWW_SITE}/api/download/${episodeId}`, {
-        "headers": {
-            "accept": "application/json, text/javascript, */*; q=0.01",
-            "accept-language": "it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7",
-            "csrf-token": csrfToken,
-            "priority": "u=1, i",
-            "sec-ch-ua": "\"Chromium\";v=\"136\", \"Google Chrome\";v=\"136\", \"Not.A/Brand\";v=\"99\"",
-            "sec-ch-ua-mobile": "?0",
-            "sec-ch-ua-platform": "\"Linux\"",
-            "sec-fetch-dest": "empty",
-            "sec-fetch-mode": "cors",
-            "sec-fetch-site": "same-origin",
-            "x-requested-with": "XMLHttpRequest",
-            "cookie": cookie,
-            "Referrer-Policy": "unsafe-url"
-        },
-        "body": null,
-        "method": "POST"
+type PopulateResult =
+  | { ok: true; episodesFound: number }
+  | { ok: false; status: number; error: string };
+
+type ScrapedEpisode = {
+  slug: string;
+  episode_number: number;
+};
+
+type ScrapedUpdatedEpisode = {
+  anime_id: number;
+  anime_slug: string;
+  anime_name: string;
+  alt_name: string | null;
+  image_url: string | null;
+  episode_slug: string;
+  episode_number: number;
+  dubbed: boolean;
+};
+
+async function populateEpisodesForAnime(
+    supabase: SupabaseClient,
+    animeSlug: string,
+): Promise<PopulateResult> {
+  const { data: animeRow, error: animeError } = await supabase
+    .from("animes")
+    .select("id")
+    .eq("slug", animeSlug)
+    .limit(1)
+    .maybeSingle();
+
+  if (animeError) {
+    return { ok: false, status: 500, error: animeError.message };
+  }
+
+  if (!animeRow?.id) {
+    return { ok: false, status: 404, error: "anime not found" };
+  }
+
+  const page = await fetchAnimeworldPlayPage(animeSlug);
+  const episodes = scrapeAnimeworldEpisodes(page.html, animeSlug);
+
+  if (episodes.length === 0) {
+    return { ok: false, status: 404, error: "episodes not found" };
+  }
+
+  const { data: existingEpisodes, error: existingEpisodesError } = await supabase
+    .from("episodes")
+    .select("slug")
+    .in("slug", episodes.map((episode) => episode.slug));
+
+  if (existingEpisodesError) {
+    return { ok: false, status: 500, error: existingEpisodesError.message };
+  }
+
+  const existingSlugs = new Set(
+    (existingEpisodes ?? []).map((episode: any) => episode.slug),
+  );
+  const existingRows = episodes.filter((episode) =>
+    existingSlugs.has(episode.slug)
+  );
+  const newRows = episodes.filter((episode) => !existingSlugs.has(episode.slug));
+
+  const { error: upsertError } = existingRows.length > 0
+    ? await supabase
+      .from("episodes")
+      .upsert(
+        existingRows.map((episode) => ({
+          anime_id: animeRow.id,
+          slug: episode.slug,
+          episode_number: episode.episode_number,
+        })),
+        { onConflict: "slug" },
+      )
+    : { error: null };
+
+  if (upsertError) {
+    return { ok: false, status: 500, error: upsertError.message };
+  }
+
+  const { error: insertError } = newRows.length > 0
+    ? await supabase
+      .from("episodes")
+      .insert(
+        newRows.map((episode) => ({
+          anime_id: animeRow.id,
+          slug: episode.slug,
+          episode_number: episode.episode_number,
+          created_at: "1990-01-01T00:00:00.000Z",
+          updated_at: "1990-01-01T00:00:00.000Z",
+        })),
+      )
+    : { error: null };
+
+  if (insertError) {
+    return { ok: false, status: 500, error: insertError.message };
+  }
+
+  return { ok: true, episodesFound: episodes.length };
+}
+
+export async function syncLatestAnimeworldEpisodes(supabase: SupabaseClient, pages = 1): Promise<{
+  ok: boolean;
+  pagesScraped: number;
+  animesFound: number;
+  episodesFound: number;
+  error?: string;
+}> {
+  try {
+    const latestEpisodes = new Map<string, ScrapedUpdatedEpisode>();
+
+    for (let pageNumber = 1; pageNumber <= pages; pageNumber += 1) {
+      const page = await fetchAnimeworldUpdatedPage(pageNumber);
+
+      for (const episode of scrapeAnimeworldUpdatedEpisodes(page.html)) {
+        latestEpisodes.set(episode.episode_slug, episode);
+      }
+    }
+
+    const latestEpisodeRows = [...latestEpisodes.values()];
+
+    if (latestEpisodeRows.length === 0) {
+      console.error("sync-latest-episodes found no episodes");
+      return {
+        ok: false,
+        pagesScraped: pages,
+        animesFound: 0,
+        episodesFound: 0,
+        error: "episodes not found",
+      };
+    }
+
+    const latestByAnimeId = new Map<number, ScrapedUpdatedEpisode>();
+
+    for (const episode of latestEpisodeRows) {
+      latestByAnimeId.set(episode.anime_id, episode);
+    }
+
+    const now = new Date().toISOString();
+    const { error: animeError } = await supabase
+      .from("animes")
+      .upsert(
+        [...latestByAnimeId.values()].map((episode) => ({
+          id: episode.anime_id,
+          slug: episode.anime_slug,
+          name: episode.anime_name,
+          image_url: episode.image_url,
+          alt_name: episode.alt_name,
+          dubbed: episode.dubbed,
+          updated_at: now,
+        })),
+        { onConflict: "id" },
+      );
+
+    if (animeError) {
+      console.error("sync-latest-episodes anime upsert failed", animeError);
+      return {
+        ok: false,
+        pagesScraped: pages,
+        animesFound: latestByAnimeId.size,
+        episodesFound: latestEpisodeRows.length,
+        error: animeError.message,
+      };
+    }
+
+    const { error: episodeError } = await supabase
+      .from("episodes")
+      .upsert(
+        latestEpisodeRows.map((episode) => ({
+          anime_id: episode.anime_id,
+          slug: episode.episode_slug,
+          episode_number: episode.episode_number,
+          updated_at: now,
+        })),
+        { onConflict: "slug" },
+      );
+
+    if (episodeError) {
+      console.error("sync-latest-episodes episode upsert failed", episodeError);
+      return {
+        ok: false,
+        pagesScraped: pages,
+        animesFound: latestByAnimeId.size,
+        episodesFound: latestEpisodeRows.length,
+        error: episodeError.message,
+      };
+    }
+
+    return {
+      ok: true,
+      pagesScraped: pages,
+      animesFound: latestByAnimeId.size,
+      episodesFound: latestEpisodeRows.length,
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+
+    console.error("sync-latest-episodes failed", error);
+    return {
+      ok: false,
+      pagesScraped: pages,
+      animesFound: 0,
+      episodesFound: 0,
+      error: message,
+    };
+  }
+}
+
+export async function runScheduledTask(supabase: SupabaseClient): Promise<void> {
+  const expiredBefore = new Date(Date.now() - CACHE_TTL_MS).toISOString();
+
+  const { error } = await supabase
+    .from("cache")
+    .delete()
+    .lt("created_at", expiredBefore);
+
+  if (error) {
+    console.error("scheduled-task failed", error);
+  }
+}
+
+async function getCachedGrabber(supabase: SupabaseClient, id: string): Promise<string | null> {
+  const freshAfter = new Date(Date.now() - CACHE_TTL_MS).toISOString();
+
+  const { data, error } = await supabase
+    .from("cache")
+    .select("url")
+    .eq("id", id)
+    .gte("created_at", freshAfter)
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    throw error;
+  }
+
+  return data?.url ?? null;
+}
+
+async function cacheGrabber(supabase: SupabaseClient, id: string, grabber: string): Promise<void> {
+  const { error } = await supabase
+    .from("cache")
+    .upsert(
+      { id, created_at: new Date().toISOString(), url: grabber },
+      { onConflict: "id" },
+    );
+
+  if (error) {
+    console.error("cache upsert failed", error);
+  }
+}
+
+async function fetchAnimeworldEpisodeInfo(
+  episodeSlug: string,
+  animeSlug: string,
+): Promise<Record<string, unknown>> {
+  const websiteUrl = `${ANIMEWORLD_BASE_URL}/api/episode/info?id=${
+    encodeURIComponent(episodeSlug)
+  }&alt=0`;
+  const referer = `${ANIMEWORLD_BASE_URL}/play/${
+    encodeURIComponent(animeSlug)
+  }/${encodeURIComponent(episodeSlug)}`;
+
+  const response = await fetch(websiteUrl, {
+    headers: {
+      accept: "application/json, text/javascript, */*; q=0.01",
+      "content-type": "application/json",
+      "csrf-token": generateRandomString(),
+      "sec-ch-ua":
+        '"Chromium";v="148", "Google Chrome";v="148", "Not/A)Brand";v="99"',
+      "sec-ch-ua-mobile": "?0",
+      "sec-ch-ua-platform": '"Windows"',
+      "x-requested-with": "XMLHttpRequest",
+      referer,
+    },
+    method: "GET",
+  });
+
+  if (!response.ok) {
+    throw new Error(`AnimeWorld request failed with ${response.status}`);
+  }
+
+  return await response.json();
+}
+
+async function fetchAnimeworldPlayPage(
+  animeSlug: string,
+): Promise<{ html: string; url: string }> {
+  const websiteUrl = `${ANIMEWORLD_BASE_URL}/play/${
+    encodeURIComponent(animeSlug)
+  }`;
+
+  const response = await fetch(websiteUrl, {
+    headers: {
+      accept:
+        "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      "sec-ch-ua":
+        '"Chromium";v="148", "Google Chrome";v="148", "Not/A)Brand";v="99"',
+      "sec-ch-ua-mobile": "?0",
+      "sec-ch-ua-platform": '"Windows"',
+    },
+    method: "GET",
+    redirect: "follow",
+  });
+
+  if (!response.ok) {
+    throw new Error(`AnimeWorld play page request failed with ${response.status}`);
+  }
+
+  return { html: await response.text(), url: response.url };
+}
+
+async function fetchAnimeworldUpdatedPage(
+  page = 1,
+): Promise<{ html: string; url: string }> {
+  const websiteUrl = page === 1
+    ? `${ANIMEWORLD_BASE_URL}/updated`
+    : `${ANIMEWORLD_BASE_URL}/updated?page=${page}`;
+
+  const response = await fetch(websiteUrl, {
+    headers: {
+      accept:
+        "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      "sec-ch-ua":
+        '"Chromium";v="148", "Google Chrome";v="148", "Not/A)Brand";v="99"',
+      "sec-ch-ua-mobile": "?0",
+      "sec-ch-ua-platform": '"Windows"',
+    },
+    method: "GET",
+    redirect: "follow",
+  });
+
+  if (!response.ok) {
+    throw new Error(`AnimeWorld updated page request failed with ${response.status}`);
+  }
+
+  return { html: await response.text(), url: response.url };
+}
+
+function scrapeAnimeworldEpisodes(
+  html: string,
+  animeSlug: string,
+): ScrapedEpisode[] {
+  const slugPattern = escapeRegExp(animeSlug);
+  const linkPattern = new RegExp(
+    `<a\\b(?=[^>]*\\bhref=["']\\/play\\/${slugPattern}\\/([^"'?#/]+)["'])(?=[^>]*\\bdata-id=["']([^"']+)["'])(?=[^>]*\\bdata-episode-num=["']([^"']+)["'])[^>]*>([\\s\\S]*?)<\\/a>`,
+    "gi",
+  );
+  const episodes = new Map<string, ScrapedEpisode>();
+
+  for (const match of html.matchAll(linkPattern)) {
+    const hrefSlug = decodeHtml(match[1]).trim();
+    const dataId = decodeHtml(match[2]).trim();
+    const episodeNumber = Number.parseFloat(decodeHtml(match[3]).trim());
+    const slug = dataId || hrefSlug;
+
+    if (!slug || !Number.isFinite(episodeNumber)) {
+      continue;
+    }
+
+    episodes.set(slug, {
+      slug,
+      episode_number: episodeNumber,
     });
+  }
 
-    if (!result.ok) {
-        console.error("Failed to fetch the download URL:", result.statusText);
-        return null;
-    }
-
-    const data = await result.json();
-    //console.log("Download URL fetched successfully:", data);
-    if (data.error) {
-        console.error("Error fetching download links:", data.message);
-        return null;
-    }
-    const links = data.links;
-    if (!links || Object.keys(links).length === 0) {
-        console.error("No download links found");
-        return null;
-    }
-    console.log("Download links found:", Object.keys(links).length);
-
-    // Extract all alternativeLink values from all servers
-    const alternativeLinks: string[] = [];
-    for (const server of Object.values(links)) {
-        const serverObj = server as Record<string, any>;
-        for (const value of Object.values(serverObj)) {
-            if (value && typeof value === 'object' && value.alternativeLink) {
-                alternativeLinks.push(value.alternativeLink);
-            }
-        }
-    }
-    console.log("Alternative links found:", alternativeLinks.length, "links:", alternativeLinks);
-
-    return alternativeLinks.length > 0 ? alternativeLinks : null;
+  return [...episodes.values()].sort((first, second) =>
+    first.episode_number - second.episode_number
+  );
 }
 
-export async function fillSeasonalFromHtml(html: string, year: number, season: string) {
-    const document = new DOMParser().parseFromString(html, "text/html");
-    if (!document) {
-        console.error("Failed to parse HTML");
-        return;
+function scrapeAnimeworldUpdatedEpisodes(html: string): ScrapedUpdatedEpisode[] {
+  const filmList = html.match(/<div\s+class=["']film-list["'][^>]*>([\s\S]*?)<div\s+class=["']clearfix["'][^>]*>/i)
+    ?.[1] ?? "";
+  const episodePattern = new RegExp(
+    [
+      `<a\\b(?=[^>]*\\bhref=["']\\/play\\/([^"'?#/]+)\\/([^"'?#/]+)["'])`,
+      `(?=[^>]*\\bclass=["'][^"']*\\bposter\\b[^"']*["'])`,
+      `(?=[^>]*\\bdata-tip=["'][^"']*\\/?api\\/tooltip\\/(\\d+)["'])[^>]*>`,
+      `[\\s\\S]*?<img\\b[^>]*\\bsrc=["']([^"']+)["'][^>]*>`,
+      `[\\s\\S]*?<div\\s+class=["']ep["'][^>]*>\\s*Ep\\s*([\\d.]+)\\s*<\\/div>`,
+      `[\\s\\S]*?<a\\b(?=[^>]*\\bhref=["']\\/play\\/[^"'?#/]+\\/[^"'?#/]+["'])`,
+      `(?=[^>]*\\bclass=["'][^"']*\\bname\\b[^"']*["'])`,
+      `(?:[^>]*\\bdata-jtitle=["']([^"']*)["'])?[^>]*>([\\s\\S]*?)<\\/a>`,
+    ].join(""),
+    "gi",
+  );
+  const episodes = new Map<string, ScrapedUpdatedEpisode>();
+
+  for (const match of filmList.matchAll(episodePattern)) {
+    const animeSlug = decodeHtml(match[1]).trim();
+    const episodeSlug = decodeHtml(match[2]).trim();
+    const animeId = Number.parseInt(decodeHtml(match[3]).trim(), 10);
+    const episodeNumber = Number.parseFloat(
+      decodeHtml(match[5]).trim(),
+    );
+    const animeName = stripHtml(decodeHtml(match[7])).trim();
+    const altName = match[6] ? decodeHtml(match[6]).trim() : null;
+    const imageUrl = decodeHtml(match[4]).trim();
+
+    if (
+      !animeSlug ||
+      !episodeSlug ||
+      !animeName ||
+      !Number.isFinite(animeId) ||
+      !Number.isFinite(episodeNumber)
+    ) {
+      continue;
     }
 
-    // I only need the anime id
-    const items = document.querySelectorAll('.film-listnext .item');
-    const seasonalData: Array<{
-        anime_id: number;
-    }> = [];
-
-    items.forEach(item => {
-        const posterLink = item.querySelector('.poster');
-        const dataTip = posterLink ? posterLink.getAttribute('data-tip') : null;
-
-        if (!dataTip) {
-            console.warn("No data-tip found for seasonal item:", item);
-            return;
-        }
-
-        const id = parseInt(dataTip.split('/').pop() || '', 10);
-        if (isNaN(id)) {
-            console.warn("Invalid ID found in data-tip:", dataTip);
-            return;
-        }
-
-        seasonalData.push({
-            anime_id: id,
-        });
+    episodes.set(episodeSlug, {
+      anime_id: animeId,
+      anime_slug: animeSlug,
+      anime_name: animeName,
+      alt_name: altName || null,
+      image_url: imageUrl || null,
+      episode_slug: episodeSlug,
+      episode_number: episodeNumber,
+      dubbed: /\b(?:ita|dub)\b/i.test(animeSlug) || /\(ITA\)/i.test(animeName),
     });
+  }
 
-    // Save seasonal data to the database
-    for (const data of seasonalData) {
-        await saveSeasonal(data.anime_id, year, season);
-    }
+  return [...episodes.values()];
 }
 
-export function getCurrentSeason(): string {
-    const date = new Date();
-    const month = date.getMonth();
+function stripHtml(value: string): string {
+  return value.replace(/<[^>]+>/g, "");
+}
 
-    // Winter (January-March)
-    // Spring (April-June)
-    // Summer (July-September)
-    // Fall (October-December)
-    if (month >= 0 && month <= 2) {
-        return "winter";
-    } else if (month >= 3 && month <= 5) {
-        return "spring";
-    } else if (month >= 6 && month <= 8) {
-        return "summer";
-    } else {
-        return "fall";
-    }
+function decodeHtml(value: string): string {
+  return value
+    .replace(/&#(\d+);/g, (_, codePoint) =>
+      String.fromCodePoint(Number(codePoint))
+    )
+    .replace(/&#x([\da-f]+);/gi, (_, codePoint) =>
+      String.fromCodePoint(Number.parseInt(codePoint, 16))
+    )
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&#39;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&amp;/g, "&");
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function generateRandomString(length = 32): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(length));
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+function getStringProperty(
+  record: Record<string, unknown>,
+  key: string,
+): string | null {
+  const value = record[key];
+  return typeof value === "string" ? value : null;
+}
+
+function parsePositiveInteger(value: string | null, fallback: number): number {
+  if (!value) {
+    return fallback;
+  }
+
+  const parsed = Number.parseInt(value, 10);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+export function json(body: unknown, status = 200): Response {
+  return Response.json(body, {
+    status,
+    headers: corsHeaders,
+  });
 }
