@@ -1,4 +1,5 @@
 import { SupabaseClient } from "jsr:@supabase/supabase-js@2";
+import { Database } from './database.types.ts'
 
 const CACHE_TTL_MS = 10 * 60 * 1000;
 const ANIMEWORLD_BASE_URL = "https://www.animeworld.ac";
@@ -10,7 +11,7 @@ export const corsHeaders = {
   "access-control-allow-methods": "GET, OPTIONS",
 };
 
-export async function handleLink(supabase: SupabaseClient, params: URLSearchParams): Promise<Response> {
+export async function handleLink(supabase: SupabaseClient<Database>, params: URLSearchParams): Promise<Response> {
   const id = params.get("id");
 
   if (!id) {
@@ -23,18 +24,20 @@ export async function handleLink(supabase: SupabaseClient, params: URLSearchPara
     return json({ grabber: cachedGrabber });
   }
 
-  const { data: episodeRows, error: episodeError } = await supabase
+  const { data: episodeRow, error: episodeError } = await supabase
     .from("episodes")
-    .select("animes!fk_episodes_anime_id ( slug )")
+    .select("animes!fk_episodes_anime_id(slug)")
+    // .select("animes!fk_episodes_anime_id ( id, slug )")
     .eq("slug", id)
-    .limit(1);
+    .limit(1)
+    .single()
 
-  if (episodeError) {
+  if (episodeError || !episodeRow) {
     return json({ error: episodeError.message }, 500);
   }
 
-//   const animeSlug = episodeRows?.[0]?.animes?.slug;
-  const animeSlug = episodeRows?.[0]?.animes?.[0]?.slug;
+  // const episodes 
+  const animeSlug = episodeRow.animes.slug;
 
   if (!animeSlug) {
     return json({ error: "not found" }, 404);
@@ -51,10 +54,10 @@ export async function handleLink(supabase: SupabaseClient, params: URLSearchPara
   return json(animeworldPayload);
 }
 
-export async function handleEpisodes(supabase: SupabaseClient, params: URLSearchParams): Promise<Response> {
-  const anime = params.get("anime");
+export async function handleEpisodes(supabase: SupabaseClient<Database>, params: URLSearchParams): Promise<Response> {
+  const anime = parseInt(params.get("anime") ?? "0");
 
-  if (!anime) {
+  if (anime === 0) {
     return json({ error: "missing anime value" }, 400);
   }
 
@@ -69,7 +72,7 @@ export async function handleEpisodes(supabase: SupabaseClient, params: URLSearch
     .select(
       "id, slug, episode_number, created_at, animes!fk_episodes_anime_id!inner ( slug )",
     )
-    .eq("animes.slug", anime)
+    .eq("animes.id", anime)
     .order("episode_number", { ascending: true });
 
   if (error) {
@@ -90,7 +93,7 @@ export async function handleEpisodes(supabase: SupabaseClient, params: URLSearch
   });
 }
 
-export async function handleSyncLatestEpisodes(supabase: SupabaseClient, params: URLSearchParams): Promise<Response> {
+export async function handleSyncLatestEpisodes(supabase: SupabaseClient<Database>, params: URLSearchParams): Promise<Response> {
   const pages = parsePositiveInteger(params.get("pages"), 1);
 
   if (pages > 5) {
@@ -123,15 +126,15 @@ type ScrapedUpdatedEpisode = {
 };
 
 async function populateEpisodesForAnime(
-    supabase: SupabaseClient,
-    animeSlug: string,
+    supabase: SupabaseClient<Database>,
+    animeId: number,
 ): Promise<PopulateResult> {
   const { data: animeRow, error: animeError } = await supabase
     .from("animes")
-    .select("id")
-    .eq("slug", animeSlug)
+    .select("id, slug")
+    .eq("id", animeId)
     .limit(1)
-    .maybeSingle();
+    .single();
 
   if (animeError) {
     return { ok: false, status: 500, error: animeError.message };
@@ -141,8 +144,9 @@ async function populateEpisodesForAnime(
     return { ok: false, status: 404, error: "anime not found" };
   }
 
-  const page = await fetchAnimeworldPlayPage(animeSlug);
-  const episodes = scrapeAnimeworldEpisodes(page.html, animeSlug);
+  const page = await fetchAnimeworldPlayPage(animeRow.slug);
+  const episodes = scrapeAnimeworldEpisodes(page.html, animeRow.slug);
+  console.log(episodes)
 
   if (episodes.length === 0) {
     return { ok: false, status: 404, error: "episodes not found" };
@@ -158,7 +162,7 @@ async function populateEpisodesForAnime(
   }
 
   const existingSlugs = new Set(
-    (existingEpisodes ?? []).map((episode: any) => episode.slug),
+    (existingEpisodes ?? []).map((episode) => episode.slug),
   );
   const existingRows = episodes.filter((episode) =>
     existingSlugs.has(episode.slug)
@@ -203,7 +207,7 @@ async function populateEpisodesForAnime(
   return { ok: true, episodesFound: episodes.length };
 }
 
-export async function syncLatestAnimeworldEpisodes(supabase: SupabaseClient, pages = 1): Promise<{
+export async function syncLatestAnimeworldEpisodes(supabase: SupabaseClient<Database>, pages = 1): Promise<{
   ok: boolean;
   pagesScraped: number;
   animesFound: number;
@@ -310,7 +314,7 @@ export async function syncLatestAnimeworldEpisodes(supabase: SupabaseClient, pag
   }
 }
 
-export async function runScheduledTask(supabase: SupabaseClient): Promise<void> {
+export async function runScheduledTask(supabase: SupabaseClient<Database>): Promise<void> {
   const expiredBefore = new Date(Date.now() - CACHE_TTL_MS).toISOString();
 
   const { error } = await supabase
@@ -323,7 +327,7 @@ export async function runScheduledTask(supabase: SupabaseClient): Promise<void> 
   }
 }
 
-async function getCachedGrabber(supabase: SupabaseClient, id: string): Promise<string | null> {
+async function getCachedGrabber(supabase: SupabaseClient<Database>, id: string): Promise<string | null> {
   const freshAfter = new Date(Date.now() - CACHE_TTL_MS).toISOString();
 
   const { data, error } = await supabase
@@ -341,7 +345,7 @@ async function getCachedGrabber(supabase: SupabaseClient, id: string): Promise<s
   return data?.url ?? null;
 }
 
-async function cacheGrabber(supabase: SupabaseClient, id: string, grabber: string): Promise<void> {
+async function cacheGrabber(supabase: SupabaseClient<Database>, id: string, grabber: string): Promise<void> {
   const { error } = await supabase
     .from("cache")
     .upsert(

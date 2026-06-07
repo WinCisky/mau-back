@@ -8,6 +8,7 @@ import {
   handleSyncLatestEpisodes,
   corsHeaders
 } from "./helper.ts"
+import { Database } from './database.types.ts'
 
 const supabaseUrl = Deno.env.get("SUPABASE_URL");
 const supabaseAnonKey = Deno.env.get("SUPABASE_KEY");
@@ -16,7 +17,7 @@ if (!supabaseUrl || !supabaseAnonKey) {
   throw new Error("Missing SUPABASE_URL or SUPABASE_KEY");
 }
 
-const supabase = createClient(supabaseUrl, supabaseAnonKey);
+const supabase = createClient<Database>(supabaseUrl, supabaseAnonKey);
 
 Deno.cron("scheduled-task", "30 */4 * * *", async () => {
   await runScheduledTask(supabase);
