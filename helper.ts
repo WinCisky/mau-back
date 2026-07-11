@@ -334,7 +334,7 @@ export async function syncLatestAnimeworldEpisodes(supabase: SupabaseClient<Data
     }
 
     const { error: episodeInsertError } = rowsToInsert.length > 0
-      ? await supabase.from("episodes").insert(rowsToInsert)
+      ? await supabase.from("episodes").upsert(rowsToInsert, { onConflict: "anime_id,episode_number" })
       : { error: null };
 
     if (episodeInsertError) {
