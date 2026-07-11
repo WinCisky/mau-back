@@ -208,17 +208,6 @@ async function populateEpisodesForAnime(
     return { ok: false, status: 500, error: insertError.message };
   }
 
-   const { error: animeUpdateError } = await supabase
-    .from("animes")
-    .update({
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", animeRow.id);
-
-  if (animeUpdateError) {
-    return { ok: false, status: 500, error: animeUpdateError.message };
-  }
-
   return { ok: true, episodesFound: episodes.length };
 }
 
