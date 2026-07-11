@@ -286,26 +286,76 @@ export async function syncLatestAnimeworldEpisodes(supabase: SupabaseClient<Data
       };
     }
 
-    const { error: episodeError } = await supabase
+    const { data: existingEpisodes, error: existingEpisodesError } = await supabase
       .from("episodes")
-      .upsert(
-        latestEpisodeRows.map((episode) => ({
-          anime_id: episode.anime_id,
-          slug: episode.episode_slug,
-          episode_number: episode.episode_number,
-          updated_at: now,
-        })),
-        { onConflict: "slug" },
-      );
+      .select("id, slug")
+      .in("slug", latestEpisodeRows.map((episode) => episode.episode_slug));
 
-    if (episodeError) {
-      console.error("sync-latest-episodes episode upsert failed", episodeError);
+    if (existingEpisodesError) {
+      console.error("sync-latest-episodes episode lookup failed", existingEpisodesError);
       return {
         ok: false,
         pagesScraped: pages,
         animesFound: latestByAnimeId.size,
         episodesFound: latestEpisodeRows.length,
-        error: episodeError.message,
+        error: existingEpisodesError.message,
+      };
+    }
+
+    const existingEpisodeIds = new Map(
+      (existingEpisodes ?? [])
+        .filter((episode): episode is { id: number; slug: string } =>
+          typeof episode.id === "number"
+        )
+        .map((episode) => [episode.slug, episode.id]),
+    );
+    const rowsToUpdate = latestEpisodeRows
+      .filter((episode) => existingEpisodeIds.has(episode.episode_slug))
+      .map((episode) => ({
+        id: existingEpisodeIds.get(episode.episode_slug)!,
+        anime_id: episode.anime_id,
+        slug: episode.episode_slug,
+        episode_number: episode.episode_number,
+        updated_at: now,
+      }));
+    const rowsToInsert = latestEpisodeRows
+      .filter((episode) => !existingEpisodeIds.has(episode.episode_slug))
+      .map((episode) => ({
+        anime_id: episode.anime_id,
+        slug: episode.episode_slug,
+        episode_number: episode.episode_number,
+        updated_at: now,
+      }));
+
+    const { error: episodeUpdateError } = rowsToUpdate.length > 0
+      ? await supabase
+        .from("episodes")
+        .upsert(rowsToUpdate, { onConflict: "id" })
+      : { error: null };
+
+    if (episodeUpdateError) {
+      console.error("sync-latest-episodes episode update failed", episodeUpdateError);
+      return {
+        ok: false,
+        pagesScraped: pages,
+        animesFound: latestByAnimeId.size,
+        episodesFound: latestEpisodeRows.length,
+        error: episodeUpdateError.message,
+      };
+    }
+
+    const { error: episodeInsertError } = rowsToInsert.length > 0
+      ? await supabase.from("episodes").insert(rowsToInsert)
+      : { error: null };
+
+    if (episodeInsertError) {
+      console.error("sync-latest-episodes episode insert failed", episodeInsertError);
+      return {
+        ok: false,
+        pagesScraped: pages,
+        animesFound: latestByAnimeId.size,
+        episodesFound: latestEpisodeRows.length,
+        error: episodeInsertError.message,
       };
     }
 
